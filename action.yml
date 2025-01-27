@@ -1,6 +1,6 @@
 
-name: 'OSS Upload Action'
-description: 'Upload assets to aliyun OSS'
+name: 'Kodo Upload Action'
+description: 'Upload assets to kodo'
 branding:
   icon: 'upload-cloud'
   color: 'yellow'
@@ -8,21 +8,18 @@ inputs:
   title:
     description: 'The title of the action'
     required: false
-  region:
-    required: false
-  endpoint:
-    required: false
-  key-id:
-    required: true
-  key-secret:
-    required: true
   bucket:
+    required: false
+  accessKey:
+    required: false
+  secretKey:
+    required: true
+  domain:
+    required: true
+  zone:
     required: true
   assets:
     required: true
-  timeout:
-    required: false
-    default: 3600
   callbackUrlExpire:
     required: false
     default: 604800

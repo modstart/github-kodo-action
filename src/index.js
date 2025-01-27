@@ -1,11 +1,11 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
-const OSS = require('ali-oss');
 const fs = require('fs');
 const {resolve} = require('path');
 const fg = require('fast-glob');
 const path = require('path');
 const axios = require('axios');
+const qiniu = require('qiniu');
 
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
@@ -24,62 +24,70 @@ const formatSize = (size) => {
 }
 
 (async () => {
-    try {
-        const title = core.getInput('title')
-        // OSS 实例化
-        const opts = {
-            accessKeyId: core.getInput('key-id'),
-            accessKeySecret: core.getInput('key-secret'),
-            bucket: core.getInput('bucket')
-        };
-        const callback = core.getInput('callback');
-        const callbackUrlExpire = core.getInput('callbackUrlExpire');
-        let successUrls = [];
 
-        ;['region', 'endpoint']
-            .filter(name => core.getInput(name))
-            .forEach(name => {
-                Object.assign(opts, {
-                    [name]: core.getInput(name)
-                })
-            })
+    const title = core.getInput('title')
+    const callback = core.getInput('callback');
+    const callbackUrlExpire = core.getInput('callbackUrlExpire');
+    const assets = core.getInput('assets', {required: true})
+    const timeout = core.getInput('timeout')
 
-        const oss = new OSS(opts)
+    const bucket = core.getInput('bucket');
+    const accessKey = core.getInput('accessKey');
+    const secretKey = core.getInput('secretKey');
+    const domain = core.getInput('domain');
+    const zone = core.getInput('zone');
 
-        // 上传资源
-        const assets = core.getInput('assets', {required: true})
+    qiniu.conf.ACCESS_KEY = accessKey;
+    qiniu.conf.SECRET_KEY = secretKey;
 
-        const timeout = core.getInput('timeout')
-        const uploadParam = {
-            timeout: 1000 * Number(timeout)
-        }
-
-        const uploadOneFile = async (localPath, desc) => {
-            let checkpoint = null;
-            let lastPercentage = null;
-            for (let i = 0; i < 5; i++) {
-                try {
-                    core.info(`upload ${localPath} to ${desc}`)
-                    const result = await oss.multipartUpload(desc, resolve(localPath), {
-                        checkpoint,
-                        async progress(percentage, cpt) {
-                            checkpoint = cpt;
-                            percentage = parseInt(percentage * 100);
-                            if (lastPercentage !== percentage) {
-                                core.info(`upload progress: ${percentage}%`);
-                                lastPercentage = percentage;
-                            }
-                        },
-                    });
-                    core.info('upload success')
-                    break;
-                } catch (e) {
-                    core.error(e);
-                    core.setFailed(e.message)
+    const uploadOneFile = async (localPath, key) => {
+        let lastPercentage = null;
+        return new Promise((resolve, reject) => {
+            try {
+                core.info(`upload ${localPath} to ${key}`)
+                const config = new qiniu.conf.Config();
+                config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
+                const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
+                const putExtra = new qiniu.resume_up.PutExtra();
+                putExtra.progressCallback = (uploadBytes, totalBytes) => {
+                    const percentage = Math.floor(uploadBytes / totalBytes * 100);
+                    if (lastPercentage !== percentage) {
+                        core.info(`upload progress: ${percentage}%`);
+                        lastPercentage = percentage;
+                    }
                 }
+                const putPolicy = new qiniu.rs.PutPolicy({
+                    scope: bucket
+                })
+                const uploadToken = putPolicy.uploadToken();
+                resumeUploader
+                    .putFile(uploadToken, key, localPath, putExtra)
+                    .then(({data, resp}) => {
+                        if (resp.statusCode === 200) {
+                            core.info('upload success')
+                            resolve(undefined);
+                        } else {
+                            throw new Error(`upload failed: ${resp.statusCode} ${resp.body}`)
+                        }
+                    });
+            } catch (e) {
+                core.error(e);
+                core.setFailed(e.message)
+                reject(e);
             }
-        }
+        })
+    }
 
+    const getFileUrl = (key) => {
+        const mac = new qiniu.auth.digest.Mac(qiniu.conf.ACCESS_KEY, qiniu.conf.SECRET_KEY);
+        const config = new qiniu.conf.Config();
+        const bucketManager = new qiniu.rs.BucketManager(mac, config);
+        const deadline = parseInt(Date.now() / 1000) + callbackUrlExpire;
+        return bucketManager.privateDownloadUrl(domain, key, deadline);
+    }
+
+    try {
+        let successUrls = [];
         for (let rule of assets.split('\n')) {
             const [src, dst] = rule.split(':')
             const files = fg.sync([src], {dot: false, onlyFiles: true})
@@ -118,9 +126,7 @@ const formatSize = (size) => {
                     url.name,
                     `(${formatSize(url.size)})`,
                 ].join('')
-                postData[key] = oss.signatureUrl(url.path, {
-                    expires: callbackUrlExpire
-                })
+                postData[key] = getFileUrl(url.path)
             })
             // GET callback with data = {successUrls}
             const res = await axios.get(callback, {
