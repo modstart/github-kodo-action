@@ -57,6 +57,7 @@ const datetime = () => {
                     core.info(`${datetime()} upload[${i}] ${localPath} to ${key}`)
                     const config = new qiniu.conf.Config();
                     config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
+                    config.useHttpsDomain = true;
                     const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
                     const putExtra = new qiniu.resume_up.PutExtra();
                     putExtra.resumeRecorder = qiniu.resume_up.createResumeRecorderSync(__dirname);
