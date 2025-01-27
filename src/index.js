@@ -25,7 +25,10 @@ const formatSize = (size) => {
 
 const datetime = () => {
     const date = new Date();
-    return [date.getFullYear(), '-', date.getMonth() + 1, '-', date.getDate(), '-', date.getHours(), ':', date.getMinutes(), ':', date.getSeconds()].map(v => v.toString().padStart(2, '0')).join('');
+    return [
+        date.getFullYear(), '-', date.getMonth() + 1, '-', date.getDate(), ' ',
+        date.getHours(), ':', date.getMinutes(), ':', date.getSeconds()
+    ].join('');
 }
 
 (async () => {
@@ -74,9 +77,15 @@ const datetime = () => {
                             core.info(`${datetime()} upload success`)
                             resolve(undefined);
                         } else {
-                            throw new Error(`upload failed: ${resp.statusCode} ${resp.body}`)
+                            core.error(`upload failed: ${resp.statusCode} ${resp.body}`)
+                            reject(new Error(`upload failed: ${resp.statusCode} ${resp.body}`));
                         }
-                    });
+                    })
+                    .catch((err) => {
+                        core.error('upload failed', err);
+                        core.setFailed(err.message)
+                        reject(err);
+                    })
             } catch (e) {
                 core.error(e);
                 core.setFailed(e.message)
