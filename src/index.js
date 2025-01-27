@@ -23,6 +23,11 @@ const formatSize = (size) => {
     }
 }
 
+const datetime = () => {
+    const date = new Date();
+    return [date.getFullYear(), '-', date.getMonth() + 1, '-', date.getDate(), '-', date.getHours(), ':', date.getMinutes(), ':', date.getSeconds()].map(v => v.toString().padStart(2, '0')).join('');
+}
+
 (async () => {
 
     const title = core.getInput('title')
@@ -44,7 +49,7 @@ const formatSize = (size) => {
         let lastPercentage = null;
         return new Promise((resolve, reject) => {
             try {
-                core.info(`upload ${localPath} to ${key}`)
+                core.info(`${datetime()} upload ${localPath} to ${key}`)
                 const config = new qiniu.conf.Config();
                 config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
                 config.retry = 3;
@@ -54,7 +59,7 @@ const formatSize = (size) => {
                 putExtra.progressCallback = (uploadBytes, totalBytes) => {
                     const percentage = Math.floor(uploadBytes / totalBytes * 100);
                     if (lastPercentage !== percentage) {
-                        core.info(`upload ${localPath} progress: ${percentage}%`);
+                        core.info(`${datetime()} upload ${localPath} progress: ${percentage}% ${formatSize(uploadBytes)}/${formatSize(totalBytes)}`);
                         lastPercentage = percentage;
                     }
                 }
@@ -66,7 +71,7 @@ const formatSize = (size) => {
                     .putFile(uploadToken, key, localPath, putExtra)
                     .then(({data, resp}) => {
                         if (resp.statusCode === 200) {
-                            core.info('upload success')
+                            core.info(`${datetime()} upload success`)
                             resolve(undefined);
                         } else {
                             throw new Error(`upload failed: ${resp.statusCode} ${resp.body}`)
@@ -102,17 +107,13 @@ const formatSize = (size) => {
                     const filename = path.basename(file)
                     await uploadOneFile(file, `${dst}${filename}`)
                     successUrls.push({
-                        name: filename,
-                        path: `${dst}${filename}`,
-                        size: fs.statSync(file).size
+                        name: filename, path: `${dst}${filename}`, size: fs.statSync(file).size
                     })
                 }
             } else {
                 await uploadOneFile(files[0], dst)
                 successUrls.push({
-                    name: path.basename(files[0]),
-                    path: dst,
-                    size: fs.statSync(files[0]).size
+                    name: path.basename(files[0]), path: dst, size: fs.statSync(files[0]).size
                 })
             }
         }
@@ -124,18 +125,14 @@ const formatSize = (size) => {
                 postData['title'] = title
             }
             successUrls.forEach((url, index) => {
-                const key = [
-                    url.name,
-                    `(${formatSize(url.size)})`,
-                ].join('')
+                const key = [url.name, `(${formatSize(url.size)})`,].join('')
                 postData[key] = getFileUrl(url.path)
             })
             // GET callback with data = {successUrls}
             const res = await axios.get(callback, {
                 params: {
                     data: JSON.stringify(postData)
-                },
-                proxy: false
+                }, proxy: false
             })
             core.info(`callback response: ${res.status} ${res.statusText} ${JSON.stringify(res.data)}`)
         }
