@@ -47,12 +47,14 @@ const formatSize = (size) => {
                 core.info(`upload ${localPath} to ${key}`)
                 const config = new qiniu.conf.Config();
                 config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
+                config.retry = 3;
+                config.timeout = 3600 * 10;
                 const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
                 const putExtra = new qiniu.resume_up.PutExtra();
                 putExtra.progressCallback = (uploadBytes, totalBytes) => {
                     const percentage = Math.floor(uploadBytes / totalBytes * 100);
                     if (lastPercentage !== percentage) {
-                        core.info(`upload progress: ${percentage}%`);
+                        core.info(`upload ${localPath} progress: ${percentage}%`);
                         lastPercentage = percentage;
                     }
                 }
