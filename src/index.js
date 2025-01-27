@@ -52,40 +52,51 @@ const datetime = () => {
         let lastPercentage = null;
         return new Promise((resolve, reject) => {
             try {
-                core.info(`${datetime()} upload ${localPath} to ${key}`)
-                const config = new qiniu.conf.Config();
-                config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
-                config.retry = 3;
-                config.timeout = 3600 * 10;
-                const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
-                const putExtra = new qiniu.resume_up.PutExtra();
-                putExtra.progressCallback = (uploadBytes, totalBytes) => {
-                    const percentage = Math.floor(uploadBytes / totalBytes * 100);
-                    if (lastPercentage !== percentage) {
-                        core.info(`${datetime()} upload ${localPath} progress: ${percentage}% ${formatSize(uploadBytes)}/${formatSize(totalBytes)}`);
-                        lastPercentage = percentage;
+                let success = false
+                for (let i = 1; i <= 3; i++) {
+                    core.info(`${datetime()} upload[${i}] ${localPath} to ${key}`)
+                    const config = new qiniu.conf.Config();
+                    config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
+                    const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
+                    const putExtra = new qiniu.resume_up.PutExtra();
+                    putExtra.resumeRecorder = qiniu.resume_up.createResumeRecorderSync(__dirname);
+                    putExtra.version = 'v2';
+                    putExtra.progressCallback = (uploadBytes, totalBytes) => {
+                        const percentage = Math.floor(uploadBytes / totalBytes * 100);
+                        if (lastPercentage !== percentage) {
+                            core.info(`${datetime()} upload[${i}] ${localPath} progress: ${percentage}% ${formatSize(uploadBytes)}/${formatSize(totalBytes)}`);
+                            lastPercentage = percentage;
+                        }
+                    }
+                    const putPolicy = new qiniu.rs.PutPolicy({
+                        scope: bucket
+                    })
+                    const uploadToken = putPolicy.uploadToken();
+                    resumeUploader
+                        .putFile(uploadToken, key, localPath, putExtra)
+                        .then(({data, resp}) => {
+                            if (resp.statusCode === 200) {
+                                core.info(`${datetime()} upload[${i}] success`)
+                                resolve(undefined);
+                                success = true
+                            } else {
+                                core.error(`${datetime()} upload[${i}] failed.1: ${resp.statusCode} ${resp.body}`)
+                                // reject(new Error(`upload failed: ${resp.statusCode} ${resp.body}`));
+                            }
+                        })
+                        .catch((err) => {
+                            core.error(`${datetime()} upload[${i}] failed.2: ${err}`);
+                            // reject(err);
+                        })
+                    if (success) {
+                        break;
                     }
                 }
-                const putPolicy = new qiniu.rs.PutPolicy({
-                    scope: bucket
-                })
-                const uploadToken = putPolicy.uploadToken();
-                resumeUploader
-                    .putFile(uploadToken, key, localPath, putExtra)
-                    .then(({data, resp}) => {
-                        if (resp.statusCode === 200) {
-                            core.info(`${datetime()} upload success`)
-                            resolve(undefined);
-                        } else {
-                            core.error(`upload failed: ${resp.statusCode} ${resp.body}`)
-                            reject(new Error(`upload failed: ${resp.statusCode} ${resp.body}`));
-                        }
-                    })
-                    .catch((err) => {
-                        core.error('upload failed', err);
-                        core.setFailed(err.message)
-                        reject(err);
-                    })
+                if (!success) {
+                    core.error(`${datetime()} upload[${i}] failed retry 3 times`)
+                    core.setFailed('upload failed')
+                    reject(new Error('upload failed'));
+                }
             } catch (e) {
                 core.error(e);
                 core.setFailed(e.message)
