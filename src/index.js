@@ -94,7 +94,7 @@ const datetime = () => {
                     }
                 }
                 if (!success) {
-                    core.error(`${datetime()} upload[${i}] failed retry 3 times`)
+                    core.error(`${datetime()} upload failed retry 3 times`)
                     core.setFailed('upload failed')
                     reject(new Error('upload failed'));
                 }
