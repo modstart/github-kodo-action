@@ -48,56 +48,46 @@ const datetime = () => {
     qiniu.conf.ACCESS_KEY = accessKey;
     qiniu.conf.SECRET_KEY = secretKey;
 
-    const uploadOneFile = async (localPath, key) => {
+    const uploadOneFile = async (localPath, key, retryTimes) => {
+        retryTimes = retryTimes || 1
         let lastPercentage = null;
         return new Promise((resolve, reject) => {
             try {
-                let success = false
-                for (let i = 1; i <= 3; i++) {
-                    core.info(`${datetime()} upload[${i}] ${localPath} to ${key}`)
-                    const config = new qiniu.conf.Config();
-                    config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
-                    config.useHttpsDomain = true;
-                    const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
-                    const putExtra = new qiniu.resume_up.PutExtra();
-                    putExtra.resumeRecorder = qiniu.resume_up.createResumeRecorderSync(__dirname);
-                    putExtra.version = 'v2';
-                    putExtra.progressCallback = (uploadBytes, totalBytes) => {
-                        const percentage = Math.floor(uploadBytes / totalBytes * 100);
-                        if (lastPercentage !== percentage) {
-                            core.info(`${datetime()} upload[${i}] ${localPath} progress: ${percentage}% ${formatSize(uploadBytes)}/${formatSize(totalBytes)}`);
-                            lastPercentage = percentage;
+                core.info(`${datetime()} upload[${retryTimes}] ${localPath} to ${key}`)
+                const config = new qiniu.conf.Config();
+                config.regionsProvider = qiniu.httpc.Region.fromRegionId(zone);
+                config.useHttpsDomain = true;
+                const resumeUploader = new qiniu.resume_up.ResumeUploader(config);
+                const putExtra = new qiniu.resume_up.PutExtra();
+                putExtra.resumeRecorder = qiniu.resume_up.createResumeRecorderSync(__dirname);
+                putExtra.version = 'v2';
+                putExtra.progressCallback = (uploadBytes, totalBytes) => {
+                    const percentage = Math.floor(uploadBytes / totalBytes * 100);
+                    if (lastPercentage !== percentage) {
+                        core.info(`${datetime()} upload[${retryTimes}] ${localPath} progress: ${percentage}% ${formatSize(uploadBytes)}/${formatSize(totalBytes)}`);
+                        lastPercentage = percentage;
+                    }
+                }
+                const putPolicy = new qiniu.rs.PutPolicy({
+                    scope: bucket,
+                    expires: 3600 * 24,
+                })
+                const uploadToken = putPolicy.uploadToken();
+                resumeUploader
+                    .putFile(uploadToken, key, localPath, putExtra)
+                    .then(({data, resp}) => {
+                        if (resp.statusCode === 200) {
+                            core.info(`${datetime()} upload[${retryTimes}] success`)
+                            resolve(undefined);
+                        } else {
+                            core.error(`${datetime()} upload[${retryTimes}] failed.1: ${resp.statusCode} ${resp.body}`)
+                            reject(new Error(`upload failed: ${resp.statusCode} ${resp.body}`));
                         }
-                    }
-                    const putPolicy = new qiniu.rs.PutPolicy({
-                        scope: bucket
                     })
-                    const uploadToken = putPolicy.uploadToken();
-                    resumeUploader
-                        .putFile(uploadToken, key, localPath, putExtra)
-                        .then(({data, resp}) => {
-                            if (resp.statusCode === 200) {
-                                core.info(`${datetime()} upload[${i}] success`)
-                                resolve(undefined);
-                                success = true
-                            } else {
-                                core.error(`${datetime()} upload[${i}] failed.1: ${resp.statusCode} ${resp.body}`)
-                                // reject(new Error(`upload failed: ${resp.statusCode} ${resp.body}`));
-                            }
-                        })
-                        .catch((err) => {
-                            core.error(`${datetime()} upload[${i}] failed.2: ${err}`);
-                            // reject(err);
-                        })
-                    if (success) {
-                        break;
-                    }
-                }
-                if (!success) {
-                    core.error(`${datetime()} upload failed retry 3 times`)
-                    core.setFailed('upload failed')
-                    reject(new Error('upload failed'));
-                }
+                    .catch((err) => {
+                        core.error(`${datetime()} upload[${retryTimes}] failed.2: ${err}`);
+                        reject(err);
+                    })
             } catch (e) {
                 core.error(e);
                 core.setFailed(e.message)
@@ -126,7 +116,21 @@ const datetime = () => {
             if (/\/$/.test(dst)) {
                 for (let file of files) {
                     const filename = path.basename(file)
-                    await uploadOneFile(file, `${dst}${filename}`)
+                    let success = false
+                    for (let i = 1; i <= 3; i++) {
+                        try {
+                            await uploadOneFile(file, `${dst}${filename}`, i)
+                            success = true
+                        } catch (e) {
+                        }
+                        if (success) {
+                            break
+                        }
+                    }
+                    if (!success) {
+                        core.error(`upload failed after 3 times: ${file}`)
+                        continue
+                    }
                     successUrls.push({
                         name: filename, path: `${dst}${filename}`, size: fs.statSync(file).size
                     })
